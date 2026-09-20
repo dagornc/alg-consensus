@@ -63,6 +63,14 @@ fn params_pour(test: &str) -> Params {
     }
 }
 
+/// Paramètres v2 : mêmes tests, avec la reconnexion activée.
+fn params_pour_v2(test: &str) -> Params {
+    Params {
+        reconnexion: true,
+        ..params_pour(test)
+    }
+}
+
 const TESTS: [&str; 9] = ["T1", "T2", "T3", "T4", "T5", "T5D", "T6", "T8", "T9"];
 
 fn main() {
@@ -71,6 +79,7 @@ fn main() {
     let mut seeds = String::from("1001-1100");
     let mut out = String::from("resultats.csv");
     let mut all = false;
+    let mut v2 = false;
 
     let mut i = 1;
     while i < args.len() {
@@ -94,8 +103,11 @@ fn main() {
                 }
             }
             "--all" => all = true,
+            "--v2" => v2 = true,
             "--help" | "-h" => {
-                println!("Usage: consensus_rs [--test T1] [--seeds 1001-1100] [--out f.csv] [--all]");
+                println!("Usage: consensus_rs [--test T1] [--seeds 1001-1100] [--out f.csv] [--all] [--v2]");
+                println!();
+                println!("  --v2   active la reconnexion des agents isoles (ALG_CONSENSUS v2)");
                 return;
             }
             other => {
@@ -125,7 +137,7 @@ fn main() {
     let mut lignes: Vec<(String, u64, Option<usize>, bool, u64, usize, Option<usize>, bool)> =
         Vec::new();
     for t in &tests {
-        let p = params_pour(t);
+        let p = if v2 { params_pour_v2(t) } else { params_pour(t) };
         for s in lo..=hi {
             let r = simuler(s, &p);
             lignes.push((

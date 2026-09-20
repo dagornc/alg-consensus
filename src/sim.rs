@@ -89,6 +89,11 @@ pub struct Params {
     pub t_retrait: Option<usize>,
     /// Force une divergence réelle entre les deux moitiés.
     pub forcer_divergence: bool,
+    /// **v2** — active la reconnexion des agents isolés.
+    ///
+    /// Désactivé par défaut : une simulation avec `reconnexion: false` suit
+    /// exactement le chemin de code de la v1 et produit les mêmes résultats.
+    pub reconnexion: bool,
 }
 
 impl Default for Params {
@@ -102,6 +107,7 @@ impl Default for Params {
             latence: 0,
             t_retrait: None,
             forcer_divergence: false,
+            reconnexion: false,
         }
     }
 }
@@ -121,6 +127,10 @@ pub struct Resultat {
     pub periode_refusion: Option<usize>,
     /// Divergence réelle observée à la fin de la partition.
     pub divergence_reelle: bool,
+    /// **v2** — nombre d'élargissements de rayon déclenchés.
+    ///
+    /// Toujours 0 quand `reconnexion` est désactivé.
+    pub reconnections: u64,
 }
 
 /// Exécute une simulation complète.
@@ -168,6 +178,10 @@ pub fn simuler(seed: u64, p: &Params) -> Resultat {
     // File d'attente par agent : (période d'arrivée, valeur).
     let mut en_vol: Vec<Vec<(usize, Etat)>> = vec![Vec::new(); N];
     let mut divergence_reelle = false;
+    // v2 : compteur d'isolement par agent (périodes consécutives sans pair).
+    let mut isole: Vec<usize> = vec![0; N];
+    // v2 : nombre d'élargissements déclenchés (métrique de diagnostic).
+    let mut reconnections: u64 = 0;
 
     for t in 1..=p.max_periodes {
         // Retrait programmé.
@@ -201,6 +215,61 @@ pub fn simuler(seed: u64, p: &Params) -> Resultat {
             let mut cibles = voisins(i, GRID_W, GRID_H);
             if p.partition && t <= fin_partition {
                 cibles.retain(|&c| cote(c) == cote(i));
+            }
+            // v2 : la v1 n'exclut pas les agents inactifs des cibles — un
+            // agent peut donc « émettre » vers des voisins retirés, qui ne
+            // reçoivent rien. Pour détecter l'isolement réel, il faut
+            // considérer les pairs effectivement joignables.
+            if p.reconnexion {
+                cibles.retain(|&c| actifs[c]);
+            }
+            // v2 : si l'agent n'a plus aucun pair joignable, il élargit son
+            // rayon de contact. Le rayon est MONOTONE : une fois élargi, il
+            // ne redescend pas (sinon l'agent oscillerait entre rayon 1 et 2
+            // sans jamais rester connecté assez longtemps).
+            if p.reconnexion && cibles.is_empty() {
+                isole[i] += 1;
+                let rayon = crate::reconnexion::rayon_effectif(isole[i]);
+                if rayon > 1 {
+                    cibles = crate::reconnexion::candidats_rayon(i, rayon, &actifs);
+                    if p.partition && t <= fin_partition {
+                        cibles.retain(|&c| cote(c) == cote(i));
+                    }
+                    if !cibles.is_empty() {
+                        reconnections += 1;
+                    }
+                }
+            }
+            // v2 : réciprocité. Un agent isolé qui émet vers un pair éloigné
+            // ne reçoit rien en retour, car ce pair ne le compte pas parmi
+            // ses propres cibles. Sans réciprocité, l'agent isolé reste
+            // bloqué sur sa valeur initiale indéfiniment.
+            //
+            // La réciprocité est portée par le message : quand un agent
+            // contacte un pair, il lui transmet AUSSI l'état de ce pair tel
+            // qu'il le connaît — mais surtout, le pair éloigné doit pouvoir
+            // répondre. On matérialise cela en faisant que tout agent
+            // contacté par un agent isolé reçoit l'état de l'émetteur ET
+            // renvoie le sien dans la même période.
+            if p.reconnexion && !cibles.is_empty() {
+                for &c in &cibles {
+                    if isole[c] >= crate::reconnexion::SEUIL_ISOLE {
+                        nouveaux[c] = fusion(nouveaux[c], Some(etat[i]));
+                    }
+                }
+            }
+            // v2 : un agent isolé doit aussi RECEVOIR. Il élargit sa propre
+            // réception : tout pair situé dans son rayon élargi lui envoie
+            // son état, même si ce pair ne l'a pas dans ses cibles.
+            if p.reconnexion && isole[i] >= crate::reconnexion::SEUIL_ISOLE {
+                let rayon = crate::reconnexion::rayon_effectif(isole[i]);
+                let mut sources = crate::reconnexion::candidats_rayon(i, rayon, &actifs);
+                if p.partition && t <= fin_partition {
+                    sources.retain(|&c| cote(c) == cote(i));
+                }
+                for c in sources {
+                    nouveaux[i] = fusion(nouveaux[i], Some(etat[c]));
+                }
             }
             if cibles.is_empty() {
                 continue;
@@ -272,6 +341,7 @@ pub fn simuler(seed: u64, p: &Params) -> Resultat {
         taille_etat,
         periode_refusion,
         divergence_reelle,
+        reconnections,
     }
 }
 
@@ -351,5 +421,59 @@ mod tests {
         };
         let r = simuler(1001, &p);
         assert_eq!(r.taille_etat, 27, "3 agents retirés sur 30");
+    }
+
+    // --- v2 : reconnexion des agents isolés ---
+
+    #[test]
+    fn v2_reconnexion_desactivee_est_identique_a_v1() {
+        // Non-régression : sans reconnexion, le résultat doit être
+        // strictement identique à celui de la v1.
+        let p = Params {
+            retrait: 3,
+            t_retrait: Some(3),
+            ..Default::default()
+        };
+        for s in [1001_u64, 1010, 1060, 1500, 2000] {
+            let r = simuler(s, &p);
+            assert_eq!(r.reconnections, 0, "graine {s} : reconnexion inactive");
+        }
+    }
+
+    #[test]
+    fn v2_corrige_les_graines_t8_en_echec() {
+        // Les 10 graines documentées comme en échec en v1 doivent toutes
+        // converger en v2.
+        let p = Params {
+            retrait: 3,
+            t_retrait: Some(3),
+            reconnexion: true,
+            ..Default::default()
+        };
+        for s in [1010_u64, 1060, 1228, 1350, 1363, 1536, 1631, 1639, 1687, 1699] {
+            let r = simuler(s, &p);
+            assert!(r.accord, "graine {s} : la v2 doit corriger l'échec v1");
+        }
+    }
+
+    #[test]
+    fn v2_ne_degrade_pas_les_graines_qui_convergeaient() {
+        // Sur un échantillon, aucune graine ne doit passer d'accord à échec.
+        let p1 = Params {
+            retrait: 3,
+            t_retrait: Some(3),
+            ..Default::default()
+        };
+        let p2 = Params {
+            reconnexion: true,
+            ..p1
+        };
+        for s in 1001..=1200u64 {
+            let r1 = simuler(s, &p1);
+            let r2 = simuler(s, &p2);
+            if r1.accord {
+                assert!(r2.accord, "graine {s} : régression v2");
+            }
+        }
     }
 }
