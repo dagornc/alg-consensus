@@ -7,3 +7,5 @@ description = "Implémentation Rust de référence de ALG_CONSENSUS (CRDT semi-t
 repository = "https://github.com/dagornc/SwarmDrones"
 
 [dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["float_roundtrip"] }

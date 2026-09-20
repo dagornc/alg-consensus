@@ -1,6 +1,20 @@
 # consensus_rs — ALG_CONSENSUS en Rust
 
-## Nouvelle version : spécification v6 / Rust v5
+## Nouvelle version : spécification v7 / Rust v6
+
+La branche `v6` ajoute un moteur à **canal unique**, des sondes de reconnexion
+soumises aux pertes/délais, un calendrier agrégé et une reprise exacte par
+checkpoint. Nouveau contrat explicite ; les moteurs v1–v5 restent inchangés.
+
+```bash
+cargo run --release --example executer_v6 -- --seed 42
+```
+
+- [Spécification v7](SPECIFICATION_V7.md)
+- [Rust v6 : utilisation, tests et mesures](V6_PROTOCOLE.md)
+- [Audit contradictoire v6](AUDIT_V6.md)
+
+## Version précédente : spécification v6 / Rust v5
 
 La branche `v5` prolonge `v4` sans réécrire les versions précédentes.
 Le moteur optimisé est opt-in : `cargo run --release -- --v5 --all`.

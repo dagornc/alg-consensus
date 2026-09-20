@@ -1,4 +1,4 @@
-name: Rust v5 — parité et audit
+name: Rust v6 — protocole v7 et non-régression v5
 on: [push, pull_request]
 permissions:
   contents: read
