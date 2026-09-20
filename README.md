@@ -32,6 +32,7 @@
 17. [Dépannage](#17-dépannage)
 18. [Glossaire](#18-glossaire)
 19. [Licence](#19-licence)
+20. [Version 2 — reconnexion des agents isolés](#20-version-2--reconnexion-des-agents-isolés)
 
 ---
 
@@ -908,6 +909,9 @@ Vérification exhaustive sur les 10 graines concernées :
 topologie. Un agent sans aucun lien ne peut pas participer à un consensus
 distribué. Le résultat est **correct** et **documenté**.
 
+> **La v2 corrige ce cas.** Voir la section 20 — la reconnexion des agents
+> isolés ramène T8 à **1000/1000** sans aucune régression.
+
 ### 15.2 Le retrait peut ne pas avoir lieu
 
 Si la convergence survient **avant** `t_retrait`, la simulation s'arrête
@@ -1062,6 +1066,93 @@ la population. **Solution** : respecter `k ≤ population.len()`.
 **MIT** — voir le fichier [`LICENSE`](LICENSE).
 
 Copyright (c) 2026 Christophe Dagorn.
+
+---
+
+## 20. Version 2 — reconnexion des agents isolés
+
+La **v2** est un **mode additionnel**. Elle ne remplace pas la v1 : sans
+l'option `--v2`, le comportement est **strictement identique** à la v1, à la
+parité bit-à-bit près.
+
+### 20.1 Le défaut corrigé
+
+La v1 ne peut pas atteindre l'accord quand un agent se retrouve **sans aucun
+pair joignable** (section 15.1). Le mécanisme v2 traite exactement ce cas.
+
+### 20.2 Le mécanisme
+
+Trois éléments, dans `src/reconnexion.rs` et `src/sim.rs` :
+
+1. **Détection de l'isolement réel.** La v1 n'exclut pas les agents inactifs
+   de ses cibles d'émission : un agent peut « émettre » vers des voisins
+   retirés, qui ne reçoivent rien. La v2 ne compte que les pairs
+   **effectivement joignables**.
+2. **Élargissement monotone du rayon.** Un agent isolé élargit son rayon de
+   contact (distance de Chebyshev) d'une unité par période d'isolement,
+   plafonné à `RAYON_MAX`. Le rayon **ne redescend jamais** : sans cette
+   monotonie, l'agent oscillerait entre rayon 1 (isolé) et rayon 2 (connecté)
+   sans jamais rester connecté assez longtemps pour converger.
+3. **Réception élargie.** Un agent isolé lit l'état des pairs de son rayon
+   élargi. Sans cela, le mécanisme serait **asymétrique** : l'agent isolé
+   émettrait vers des pairs éloignés, mais ces pairs ne le compteraient pas
+   parmi leurs propres cibles et ne lui répondraient jamais. C'est cette
+   asymétrie qui bloquait l'accord.
+
+### 20.3 Résultats mesurés
+
+Sur 1 000 graines (1001–2000) :
+
+| Test | v1 | v2 | Δ accord | Messages v1 | Messages v2 | Δ messages |
+|---|---|---|---|---|---|---|
+| T1 | 1000/1000 | 1000/1000 | 0 | 470 204 | 470 204 | 0,0 % |
+| T2 | 1000/1000 | 1000/1000 | 0 | 470 204 | 470 204 | 0,0 % |
+| T3 | 1000/1000 | 1000/1000 | 0 | 529 396 | 529 396 | 0,0 % |
+| T4 | 1000/1000 | 1000/1000 | 0 | 940 408 | 940 408 | 0,0 % |
+| T5 | 1000/1000 | 1000/1000 | 0 | 3 348 978 | 3 348 978 | 0,0 % |
+| T5D | 1000/1000 | 1000/1000 | 0 | 9 094 000 | 9 094 000 | 0,0 % |
+| T6 | 1000/1000 | 1000/1000 | 0 | 470 204 | 470 204 | 0,0 % |
+| **T8** | **990/1000** | **1000/1000** | **+10** | **619 038** | **420 982** | **−32,0 %** |
+| T9 | 1000/1000 | 1000/1000 | 0 | 3 348 978 | 3 348 978 | 0,0 % |
+
+**Lecture.** Le gain est **ciblé sur T8** : c'est le seul test qui produit des
+agents isolés. Sur les huit autres tests, le mécanisme ne se déclenche jamais
+et le résultat est **strictement identique** — c'est le comportement attendu
+d'un mode additionnel.
+
+Le **−32 % de messages** sur T8 est un effet secondaire : en v1, l'agent isolé
+émettait chaque période vers des voisins retirés (messages perdus). La v2
+supprime ce trafic inutile.
+
+**Aucune régression** : sur les 1 000 graines, aucune graine qui convergeait
+en v1 n'échoue en v2.
+
+### 20.4 Utilisation
+
+```bash
+# v1 (comportement historique, par défaut)
+consensus_rs --test T8 --seeds 1001-2000 --out t8_v1.csv
+
+# v2 (reconnexion active)
+consensus_rs --test T8 --seeds 1001-2000 --out t8_v2.csv --v2
+```
+
+En bibliothèque :
+
+```rust
+use consensus_rs::sim::{simuler, Params};
+
+let p = Params { reconnexion: true, ..Default::default() };
+let r = simuler(1010, &p);
+assert!(r.accord);
+```
+
+### 20.5 Garanties
+
+- **Parité v1 préservée** : 9 000 graines, 0 écart (`verify_parite_rust.py`).
+- **26/26 tests** passent (21 unitaires + 5 d'intégration), 0 warning.
+- **Non-régression testée** : `v2_ne_degrade_pas_les_graines_qui_convergeaient`
+  vérifie sur 200 graines qu'aucune ne passe d'accord à échec.
 
 ---
 
