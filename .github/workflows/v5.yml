@@ -1,0 +1,14 @@
+name: Rust v5 — parité et audit
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --all-targets
+      - run: cargo test --release --all-targets
+      - run: cargo build --release
+      - run: python3 verify_parite_rust.py --v5 --seeds 1001-1100

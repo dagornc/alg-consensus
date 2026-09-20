@@ -12,6 +12,7 @@ import argparse
 import os
 import subprocess
 import sys
+import tempfile
 
 # La référence Python est embarquée dans le dépôt (reference/sim_consensus.py),
 # ce qui rend la vérification reproductible sans dépendance externe.
@@ -60,6 +61,7 @@ def lire_csv(chemin):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--seeds", default="1001-1100")
+    ap.add_argument("--v5", action="store_true", help="Vérifier le moteur Rust optimisé v5")
     args = ap.parse_args()
     lo, hi = (int(x) for x in args.seeds.split("-"))
 
@@ -72,9 +74,10 @@ def main():
             r = sc.simuler(s, **params)
             ref[(test, s)] = (r[0], r[1], r[2], r[3], r[4], r[5])
         # Implémentation Rust.
-        csv_rs = f"/tmp/_parite_{test}.csv"
+        fd, csv_rs = tempfile.mkstemp(prefix=f"consensus_parite_{test}_", suffix=".csv")
+        os.close(fd)
         subprocess.run(
-            [BIN, "--test", test, "--seeds", f"{lo}-{hi}", "--out", csv_rs],
+            [BIN, "--test", test, "--seeds", f"{lo}-{hi}", "--out", csv_rs] + (["--v5"] if args.v5 else []),
             check=True,
             capture_output=True,
         )

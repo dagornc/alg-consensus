@@ -92,6 +92,7 @@ fn main() {
     let mut v2 = false;
     let mut v3 = false;
     let mut v4 = false;
+    let mut v5 = false;
     let mut etat = false;
     let mut journal = false;
 
@@ -120,6 +121,7 @@ fn main() {
             "--v2" => v2 = true,
             "--v3" => v3 = true,
             "--v4" => v4 = true,
+            "--v5" => v5 = true,
             "--etat" => etat = true,
             "--journal" => journal = true,
             "--help" | "-h" => {
@@ -128,6 +130,7 @@ fn main() {
                 println!("  --v2       active la reconnexion des agents isoles (ALG_CONSENSUS v2)");
                 println!("  --v3       active la quiescence en plus de la v2 (ALG_CONSENSUS v3)");
                 println!("  --v4       execute la boucle operationnelle (loop engineering, 8 building blocks)");
+                println!("  --v5       moteur optimisé v5 ; combiner avec --v2/--v3 pour ces politiques ; incompatible --v4");
                 println!("  --etat     affiche l'etat operationnel final serialise (avec --v4)");
                 println!("  --journal  affiche le journal d'audit de la boucle (avec --v4)");
                 return;
@@ -140,6 +143,10 @@ fn main() {
         i += 1;
     }
 
+    if v5 && v4 {
+        eprintln!("--v5 et --v4 sont incompatibles : la boucle v4 reste une référence indépendante");
+        std::process::exit(2);
+    }
     // Analyse de la plage de graines.
     let parts: Vec<&str> = seeds.split('-').collect();
     if parts.len() != 2 {
@@ -215,7 +222,11 @@ fn main() {
             params_pour(t)
         };
         for s in lo..=hi {
-            let r = simuler(s, &p);
+            let r = if v5 {
+                consensus_rs::optimise_v5::simuler_v5(s, &p).expect("paramètres CLI valides")
+            } else {
+                simuler(s, &p)
+            };
             lignes.push((
                 t.to_string(),
                 s,

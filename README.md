@@ -1,5 +1,20 @@
 # consensus_rs — ALG_CONSENSUS en Rust
 
+## Nouvelle version : spécification v6 / Rust v5
+
+La branche `v5` prolonge `v4` sans réécrire les versions précédentes.
+Le moteur optimisé est opt-in : `cargo run --release -- --v5 --all`.
+Pour les politiques de reconnexion/quiescence : ajouter `--v3`.
+Il accélère le **simulateur**, pas les échanges réseau : résultats et
+compteurs restent compatibles. La boucle opérationnelle `--v4` est inchangée.
+
+- [Spécification v6](SPECIFICATION_V6.md) : contrat, justification des optimisations et limites.
+- [Développement Rust v5](V5_OPTIMISATION.md) : API, utilisation, benchmarks et tests.
+- [Audit contradictoire](AUDIT_V5.md) : itérations, branches rejetées et réserves.
+
+Les chapitres historiques ci-dessous restent des références des versions
+antérieures ; les limites précisées en v6 prévalent pour interpréter la v5 Rust.
+
 > **Implémentation Rust de référence de l'algorithme ALG_CONSENSUS**
 > (CRDT semi-treillis + gossip), portage à **parité bit-à-bit** du simulateur
 > Python de la spécification v5 (§4.7.1).

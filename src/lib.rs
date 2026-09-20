@@ -30,6 +30,7 @@ pub mod quiescence;
 pub mod operationnel;
 pub mod verificateur;
 pub mod boucle_v4;
+pub mod optimise_v5;
 
 pub use rng::PyRandom;
 pub use sim::{simuler, Params, Resultat, GRID_H, GRID_W, N};
