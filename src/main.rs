@@ -71,6 +71,16 @@ fn params_pour_v2(test: &str) -> Params {
     }
 }
 
+/// Paramètres v3 : v2 + quiescence (arrêt de l'émission quand l'état est
+/// stable, avec réveil périodique).
+fn params_pour_v3(test: &str) -> Params {
+    Params {
+        reconnexion: true,
+        quiescence: true,
+        ..params_pour(test)
+    }
+}
+
 const TESTS: [&str; 9] = ["T1", "T2", "T3", "T4", "T5", "T5D", "T6", "T8", "T9"];
 
 fn main() {
@@ -80,6 +90,7 @@ fn main() {
     let mut out = String::from("resultats.csv");
     let mut all = false;
     let mut v2 = false;
+    let mut v3 = false;
 
     let mut i = 1;
     while i < args.len() {
@@ -104,10 +115,12 @@ fn main() {
             }
             "--all" => all = true,
             "--v2" => v2 = true,
+            "--v3" => v3 = true,
             "--help" | "-h" => {
-                println!("Usage: consensus_rs [--test T1] [--seeds 1001-1100] [--out f.csv] [--all] [--v2]");
+                println!("Usage: consensus_rs [--test T1] [--seeds 1001-1100] [--out f.csv] [--all] [--v2] [--v3]");
                 println!();
                 println!("  --v2   active la reconnexion des agents isoles (ALG_CONSENSUS v2)");
+                println!("  --v3   active la quiescence en plus de la v2 (ALG_CONSENSUS v3)");
                 return;
             }
             other => {
@@ -137,7 +150,13 @@ fn main() {
     let mut lignes: Vec<(String, u64, Option<usize>, bool, u64, usize, Option<usize>, bool)> =
         Vec::new();
     for t in &tests {
-        let p = if v2 { params_pour_v2(t) } else { params_pour(t) };
+        let p = if v3 {
+            params_pour_v3(t)
+        } else if v2 {
+            params_pour_v2(t)
+        } else {
+            params_pour(t)
+        };
         for s in lo..=hi {
             let r = simuler(s, &p);
             lignes.push((

@@ -94,6 +94,12 @@ pub struct Params {
     /// Désactivé par défaut : une simulation avec `reconnexion: false` suit
     /// exactement le chemin de code de la v1 et produit les mêmes résultats.
     pub reconnexion: bool,
+    /// **v3** — active la quiescence (arrêt de l'émission quand l'état est
+    /// stable depuis `SEUIL_QUIESCENCE` périodes).
+    ///
+    /// Désactivé par défaut : le chemin de code v1/v2 est alors strictement
+    /// inchangé.
+    pub quiescence: bool,
 }
 
 impl Default for Params {
@@ -108,6 +114,7 @@ impl Default for Params {
             t_retrait: None,
             forcer_divergence: false,
             reconnexion: false,
+            quiescence: false,
         }
     }
 }
@@ -131,6 +138,10 @@ pub struct Resultat {
     ///
     /// Toujours 0 quand `reconnexion` est désactivé.
     pub reconnections: u64,
+    /// **v3** — nombre d'émissions supprimées par la quiescence.
+    ///
+    /// Toujours 0 quand `quiescence` est désactivé.
+    pub emissions_evitees: u64,
 }
 
 /// Exécute une simulation complète.
@@ -182,6 +193,12 @@ pub fn simuler(seed: u64, p: &Params) -> Resultat {
     let mut isole: Vec<usize> = vec![0; N];
     // v2 : nombre d'élargissements déclenchés (métrique de diagnostic).
     let mut reconnections: u64 = 0;
+    // v3 : périodes consécutives sans changement d'état, par agent.
+    let mut stable: Vec<usize> = vec![0; N];
+    // v3 : nombre d'émissions supprimées par la quiescence (diagnostic).
+    let mut emissions_evitees: u64 = 0;
+    // v3 : état de chaque agent à la période précédente (détection de stabilité).
+    let mut etat_precedent: Vec<Etat> = etat.clone();
 
     for t in 1..=p.max_periodes {
         // Retrait programmé.
@@ -271,6 +288,14 @@ pub fn simuler(seed: u64, p: &Params) -> Resultat {
                     nouveaux[i] = fusion(nouveaux[i], Some(etat[c]));
                 }
             }
+            // v3 : quiescence. Un agent dont l'état n'a pas changé depuis
+            // SEUIL_QUIESCENCE périodes cesse d'émettre : il n'a plus rien de
+            // nouveau à transmettre. Il RESTE récepteur — s'il reçoit un état
+            // différent, son compteur retombe à zéro et il se réveille.
+            if p.quiescence && !crate::quiescence::doit_emettre(stable[i]) {
+                emissions_evitees += 1;
+                continue;
+            }
             if cibles.is_empty() {
                 continue;
             }
@@ -293,6 +318,22 @@ pub fn simuler(seed: u64, p: &Params) -> Resultat {
         for d in 0..N {
             if let Some(v) = nouveaux[d] {
                 etat[d] = fusion(Some(etat[d]), Some(v)).unwrap();
+            }
+        }
+
+        // v3 : mise à jour du compteur de stabilité. Un agent dont l'état a
+        // changé pendant cette période repart à zéro ; sinon il vieillit.
+        if p.quiescence {
+            for i in 0..N {
+                if !actifs[i] {
+                    continue;
+                }
+                if etat[i] == etat_precedent[i] {
+                    stable[i] += 1;
+                } else {
+                    stable[i] = 0;
+                }
+                etat_precedent[i] = etat[i];
             }
         }
 
@@ -342,6 +383,7 @@ pub fn simuler(seed: u64, p: &Params) -> Resultat {
         periode_refusion,
         divergence_reelle,
         reconnections,
+        emissions_evitees,
     }
 }
 
