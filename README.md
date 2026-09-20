@@ -33,6 +33,7 @@
 18. [Glossaire](#18-glossaire)
 19. [Licence](#19-licence)
 20. [Version 2 — reconnexion des agents isolés](#20-version-2--reconnexion-des-agents-isolés)
+21. [Version 3 — quiescence (loop engineering)](#21-version-3--quiescence-loop-engineering)
 
 ---
 
@@ -1156,6 +1157,122 @@ assert!(r.accord);
 
 ---
 
+## 21. Version 3 — quiescence (loop engineering)
+
+### 21.1 Le problème laissé par la v2
+
+La v2 corrige l'isolement des agents, mais elle conserve un défaut de fond :
+**chaque agent émet à chaque période, indéfiniment**, même quand tous les
+agents partagent déjà la même valeur. Le coût en messages est donc
+proportionnel au nombre de périodes simulées, pas à l'information réellement
+transportée.
+
+Mesures v2 sur 1 000 graines :
+
+- T1 : 470 messages en moyenne, convergence médiane à 5 périodes.
+- T5D : **9 094 messages**, convergence à 103 périodes.
+
+T5D transporte une information qui tient en quelques dizaines de messages
+utiles, mais en consomme 9 094.
+
+### 21.2 Le mécanisme
+
+Chaque agent tient un compteur `stable[i]` : nombre de périodes consécutives
+pendant lesquelles son état n'a pas changé. Au-delà de `SEUIL_QUIESCENCE`
+(8 périodes), l'agent cesse d'émettre — il est **quiescent**.
+
+Un agent quiescent **reste récepteur** : s'il reçoit un état différent, son
+compteur retombe à zéro et il se réveille.
+
+### 21.3 Le piège : la stabilité est locale
+
+La première implémentation — quiescence pure, sans réveil — **casse la
+convergence**. Mesuré : T5D passe de 1000/1000 à **0/1000** d'accord.
+
+La cause est structurelle. Dans T5D, une partition force une divergence entre
+deux moitiés. Chaque moitié converge **en interne** bien avant la re-fusion :
+tous les agents deviennent donc quiescents vers la période 8. Quand la
+partition tombe à t = 103, **plus personne n'émet** : les deux moitiés ne se
+reparlent jamais.
+
+La stabilité est une propriété **locale**. Un agent stable dans sa composante
+peut appartenir à une composante qui doit encore fusionner avec une autre.
+
+### 21.4 La correction : réveil périodique
+
+Un agent quiescent émet quand même tous les `PERIODE_REVEIL` (16) tours. Cela
+garantit qu'une information nouvelle finit toujours par circuler, au prix
+d'un coût résiduel borné.
+
+```rust
+pub fn doit_emettre(stable: usize) -> bool {
+    if stable < SEUIL_QUIESCENCE {
+        return true;
+    }
+    stable % PERIODE_REVEIL == 0
+}
+```
+
+### 21.5 Résultats mesurés (1 000 graines par test, 9 tests)
+
+| test | v2 accord | v2 messages | v3 accord | v3 messages | delta |
+|------|-----------|-------------|-----------|-------------|-------|
+| T1   | 1000/1000 | 470 204     | 1000/1000 | 470 166     | −0,0 % |
+| T3   | 1000/1000 | 529 396     | 1000/1000 | 529 207     | −0,0 % |
+| T4   | 1000/1000 | 940 408     | 1000/1000 | 940 332     | −0,0 % |
+| T5   | 1000/1000 | 3 348 978   | 1000/1000 | 795 873     | **−76,2 %** |
+| T5D  | 1000/1000 | 9 094 000   | 1000/1000 | 1 541 184   | **−83,1 %** |
+| T8   | 1000/1000 | 420 982     | 1000/1000 | 420 875     | −0,0 % |
+| T9   | 1000/1000 | 3 348 978   | 1000/1000 | 795 873     | **−76,2 %** |
+
+**Total : −66,3 % de messages par rapport à la v2, −66,6 % par rapport à la
+v1, avec un accord de 1000/1000 sur les 9 tests.**
+
+Le seul coût : T5D converge à 117 périodes au lieu de 103 (+14). C'est le prix
+du réveil périodique — échange très favorable.
+
+### 21.6 Utilisation
+
+En ligne de commande :
+
+```bash
+consensus_rs --test T5D --seeds 1001-2000 --v3 --out resultats.csv
+```
+
+En bibliothèque :
+
+```rust
+use consensus_rs::sim::{simuler, Params};
+
+let p = Params { reconnexion: true, quiescence: true, ..Default::default() };
+let r = simuler(1001, &p);
+assert!(r.accord);
+```
+
+### 21.7 Garanties
+
+- **Parité v1 préservée** : 9 000 graines, 0 écart (`verify_parite_rust.py`).
+- **30/30 tests** passent (25 unitaires + 5 d'intégration), 0 warning.
+- **Non-régression mesurée** : accord v3 ≥ accord v2 sur les 9 tests.
+
+### 21.8 Méthode : loop engineering
+
+La v3 a été produite en appliquant les *building blocks* de **loop
+engineering** (Lulla et al., 2026, arXiv:2608.21884v2) :
+
+- **Goal & stop condition** — objectif : réduire le coût en messages sans
+  dégrader l'accord. Critère d'arrêt machine-checkable : accord v3 ≥ accord v2
+  sur les 9 tests.
+- **State & memory** — les mesures sont persistées dans des CSV et comparées
+  par `compare_v1_v2_v3.py`.
+- **Verification (maker/checker)** — le harnais de mesure est indépendant du
+  code de simulation ; la parité v1 est vérifiée par un script séparé.
+- **Human oversight** — la v3 reste sur sa branche, non fusionnée dans
+  `master` : le changement de comportement par défaut est une décision humaine.
+- **Budgets** — la boucle est bornée : 9 tests × 1 000 graines par itération.
+
+---
+
 ## Références
 
 - Spécification **ALG_CONSENSUS v5**, §4.7.1 (harnais de tests).
@@ -1164,3 +1281,6 @@ assert!(r.accord);
 - CPython, `Lib/random.py` et `Modules/_randommodule.c` — sémantique de
   `random.Random`, `randint`, `sample`, `getrandbits`.
 - Shapiro, M. et al. (2011). *Conflict-free Replicated Data Types.* SSS 2011.
+- Lulla, J., Nersesyan, A., Mohsenimofidi, S., Treude, C. & Baltes, S. (2026).
+  *Loop Engineering: A Framework for Automated Control Structures over Coding
+  Agents.* arXiv:2608.21884v2. JAWs@ASE 2026.
