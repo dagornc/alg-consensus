@@ -27,6 +27,9 @@ pub mod rng;
 pub mod sim;
 pub mod reconnexion;
 pub mod quiescence;
+pub mod operationnel;
+pub mod verificateur;
+pub mod boucle_v4;
 
 pub use rng::PyRandom;
 pub use sim::{simuler, Params, Resultat, GRID_H, GRID_W, N};

@@ -91,6 +91,9 @@ fn main() {
     let mut all = false;
     let mut v2 = false;
     let mut v3 = false;
+    let mut v4 = false;
+    let mut etat = false;
+    let mut journal = false;
 
     let mut i = 1;
     while i < args.len() {
@@ -116,11 +119,17 @@ fn main() {
             "--all" => all = true,
             "--v2" => v2 = true,
             "--v3" => v3 = true,
+            "--v4" => v4 = true,
+            "--etat" => etat = true,
+            "--journal" => journal = true,
             "--help" | "-h" => {
-                println!("Usage: consensus_rs [--test T1] [--seeds 1001-1100] [--out f.csv] [--all] [--v2] [--v3]");
+                println!("Usage: consensus_rs [--test T1] [--seeds 1001-1100] [--out f.csv] [--all] [--v2] [--v3] [--v4] [--etat] [--journal]");
                 println!();
-                println!("  --v2   active la reconnexion des agents isoles (ALG_CONSENSUS v2)");
-                println!("  --v3   active la quiescence en plus de la v2 (ALG_CONSENSUS v3)");
+                println!("  --v2       active la reconnexion des agents isoles (ALG_CONSENSUS v2)");
+                println!("  --v3       active la quiescence en plus de la v2 (ALG_CONSENSUS v3)");
+                println!("  --v4       execute la boucle operationnelle (loop engineering, 8 building blocks)");
+                println!("  --etat     affiche l'etat operationnel final serialise (avec --v4)");
+                println!("  --journal  affiche le journal d'audit de la boucle (avec --v4)");
                 return;
             }
             other => {
@@ -145,6 +154,54 @@ fn main() {
     } else {
         vec![test.as_str()]
     };
+
+    // ---------------------------------------------------------------- mode v4
+    // Boucle opérationnelle (loop engineering) : exécute les 8 building blocks
+    // sur la plage de graines demandée, puis affiche l'état et/ou le journal.
+    if v4 {
+        use consensus_rs::boucle_v4::{
+            executer_v4, BudgetV4, ConditionArret, Intention,
+        };
+        let graines: Vec<u64> = (lo..=hi).collect();
+        let base = if v3 {
+            params_pour_v3(tests[0])
+        } else if v2 {
+            params_pour_v2(tests[0])
+        } else {
+            params_pour(tests[0])
+        };
+        let condition = ConditionArret {
+            accord_min: 1.0,
+            max_tours: 8,
+            exiger_invariants: true,
+            budget_messages: None,
+        };
+        let budget = BudgetV4 { max_runs: 8, max_evaluations: 64 };
+        let r = executer_v4(&graines, &base, Intention::default(), condition, budget, &[]);
+
+        println!("=== v4 — boucle opérationnelle (loop engineering) ===");
+        println!("graines        : {} ({} runs)", graines.len(), r.runs);
+        println!("évaluations    : {}", r.evaluations);
+        println!("arrêt satisfait: {}", r.arret_satisfait);
+        println!("motif d'arrêt  : {}", r.motif_arret);
+        println!(
+            "état final     : accord={:.3} valeur={:?} actifs={}",
+            r.etat_final.accord, r.etat_final.valeur_dominante, r.etat_final.actifs
+        );
+        println!("invariants     : {:?}", r.etat_final.verifier_invariants());
+
+        if journal {
+            println!("\n--- journal d'audit ---");
+            for a in &r.audit {
+                println!("  {a}");
+            }
+        }
+        if etat {
+            println!("\n--- état sérialisé ---");
+            print!("{}", r.etat_final.serialiser());
+        }
+        return;
+    }
 
     // Collecte des résultats.
     let mut lignes: Vec<(String, u64, Option<usize>, bool, u64, usize, Option<usize>, bool)> =

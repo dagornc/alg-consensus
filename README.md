@@ -969,7 +969,16 @@ consensus_rs/
 │   ├── lib.rs                  # racine du crate, ré-exports, documentation
 │   ├── rng.rs                  # MT19937 compatible CPython (random, randint, sample)
 │   ├── sim.rs                  # simulateur : état, fusion, gossip, topologie, tests
+│   ├── reconnexion.rs          # v2 — reconnexion des agents isolés
+│   ├── quiescence.rs           # v3 — quiescence (émissions supprimées)
+│   ├── operationnel.rs         # v4 — état de consensus, persistance, invariants
+│   ├── verificateur.rs         # v4 — vérification indépendante (maker/checker)
+│   ├── boucle_v4.rs            # v4 — boucle opérationnelle (8 building blocks)
 │   └── main.rs                 # CLI compatible avec sim_consensus.py
+│
+├── examples/
+│   ├── operationnel_v4.rs      # v4 — démonstration du cycle opérationnel complet
+│   └── ...                     # diagnostics v2/v3/v4
 │
 ├── tests/
 │   ├── parite.rs               # tests de parité avec CPython
@@ -978,6 +987,7 @@ consensus_rs/
 ├── reference/
 │   └── sim_consensus.py        # simulateur Python de référence (embarqué, 204 lignes)
 │
+├── V4_OPERATIONNEL.md          # v4 — documentation de la couche opérationnelle
 └── verify_parite_rust.py       # comparaison automatique Rust vs Python
 ```
 
@@ -985,10 +995,15 @@ consensus_rs/
 
 | Fichier | Lignes | Rôle |
 |---|---|---|
-| `src/lib.rs` | 30 | Point d'entrée du crate, documentation du modèle |
+| `src/lib.rs` | 35 | Point d'entrée du crate, documentation du modèle |
 | `src/rng.rs` | 311 | RNG compatible CPython — **le fichier critique** |
-| `src/sim.rs` | 355 | Simulateur complet + 8 tests unitaires |
-| `src/main.rs` | 210 | CLI, table des 9 tests, écriture CSV, résumé |
+| `src/sim.rs` | 739 | Simulateur complet + `simuler_avec_vues` (v4) |
+| `src/reconnexion.rs` | 158 | v2 — rayon effectif, candidats, seuil d'isolement |
+| `src/quiescence.rs` | 111 | v3 — condition d'émission, seuil de stabilité |
+| `src/operationnel.rs` | 547 | v4 — état, persistance, reconfiguration, 5 invariants |
+| `src/verificateur.rs` | 307 | v4 — vérification indépendante, semi-treillis |
+| `src/boucle_v4.rs` | 559 | v4 — boucle, adaptation, supervision, escalade |
+| `src/main.rs` | 298 | CLI, table des 9 tests, écriture CSV, résumé, mode v4 |
 | `tests/parite.rs` | 81 | 5 tests d'intégration contre CPython |
 | `reference/sim_consensus.py` | 204 | Référence Python, bibliothèque standard |
 | `verify_parite_rust.py` | 103 | Harnais de comparaison automatique |
@@ -1270,6 +1285,74 @@ engineering** (Lulla et al., 2026, arXiv:2608.21884v2) :
 - **Human oversight** — la v3 reste sur sa branche, non fusionnée dans
   `master` : le changement de comportement par défaut est une décision humaine.
 - **Budgets** — la boucle est bornée : 9 tests × 1 000 graines par itération.
+
+---
+
+## 22. Version 4 — couche opérationnelle (loop engineering)
+
+La v3 implémentait le loop engineering comme **cadre descriptif**. La v4 le
+rend **exécutable** : les 8 building blocks deviennent du code vérifiable.
+
+### 22.1 Les 8 building blocks
+
+| # | Building block | Implémentation |
+|---|---|---|
+| 1 | Déclenchement | `Declencheur` : Initial, Cadence, Partition, Reconfiguration, Derive, Budget |
+| 2 | Condition d'arrêt machine-checkable | `ConditionArret` : accord_min, max_tours, exiger_invariants, budget_messages |
+| 3 | État / mémoire | `EtatConsensus` : vues par agent, sérialisation texte stable |
+| 4 | Skills / intention | `Intention` : reconnexion, quiescence, duplication |
+| 5 | Isolation bac à sable | `Bac` : graine déterministe, exécution reproductible |
+| 6 | Vérification maker/checker | `verifier_run`, `verifier_semi_treillis` — indépendants du simulateur |
+| 7 | Supervision / audit | `Supervision` : journal, détection de dérive, escalade |
+| 8 | Budgets durs | `BudgetV4` : max_runs, max_evaluations |
+
+### 22.2 Modules ajoutés
+
+- **`src/operationnel.rs`** (547 l.) — état de consensus complet, persistance,
+  reconfiguration dynamique, **5 invariants**.
+- **`src/verificateur.rs`** (307 l.) — vérification indépendante : invariants,
+  monotonie de la valeur, budget de messages, propriétés du semi-treillis.
+- **`src/boucle_v4.rs`** (559 l.) — la boucle, `Adaptation` (move *handoff*),
+  `Supervision`, escalade sur **tous** les chemins de sortie.
+- **`src/sim.rs`** — ajout de `simuler_avec_vues` (vues réelles par agent).
+  `simuler` reste **strictement inchangé** : parité préservée.
+
+### 22.3 Résultats mesurés
+
+**Cycle nominal** (partition + quiescence) : arrêt au tour 0, accord 1.000,
+30 agents actifs, invariants satisfaits.
+
+**Mode dégradé** (perte totale) : 4 runs, duplication 1→4, coût 1078→4312
+messages, **escalade consignée**. Constat honnête : l'adaptation augmente le
+coût **sans améliorer la convergence** (accord final 0.30). La v4 détecte,
+consigne et escalade — elle ne résout pas.
+
+**Cas de non-convergence identifiés** : perte 1.0 (0/10), perte 0.99 (0/10),
+`max_periodes=1` (0/10). La partition forcée et la perte 0.9 convergent
+réellement (10/10).
+
+### 22.4 Attaques — la vérification n'est pas du théâtre
+
+Trois corruptions testées, **toutes rejetées** : agent inactif porteur d'état,
+champ non numérique, cardinalité incohérente. Ces attaques ont révélé **deux
+vrais défauts** (corrigés) : `EtatConsensus::vide` créait des agents actifs
+sans état ; `Reconfiguration::appliquer` conservait l'état des agents retirés.
+
+### 22.5 Utilisation
+
+```bash
+./target/release/consensus_rs --v4 --seeds 1000-1009 --journal
+./target/release/consensus_rs --v4 --seeds 1000-1002 --etat
+cargo run --release --example operationnel_v4
+```
+
+### 22.6 Limites
+
+1. **Pas de parité Python pour la couche v4** — la parité porte sur le cœur
+   algorithmique (v1/v2/v3).
+2. **Une seule politique d'adaptation** (duplication croissante).
+3. **Pas de système distribué réel** — la reconfiguration s'applique à l'état.
+4. **L'adaptation ne résout pas la perte totale** — elle escalade.
 
 ---
 
